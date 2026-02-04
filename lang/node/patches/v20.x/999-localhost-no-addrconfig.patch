@@ -1,10 +1,3 @@
-Description: do not use dns.ADDRCONFIG for localhost
- it fails on IPv6-only systems. Setting it with libc fails on linux.
- https://github.com/nodejs/node/issues/33279
-Author: Jérémy Lal <kapouer@melix.org>
-Last-Update: 2020-06-11
-Bug-Debian: https://bugs.debian.org/962318
-Forwarded: https://github.com/nodejs/node/issues/33816
 --- a/lib/net.js
 +++ b/lib/net.js
 @@ -1,4 +1,5 @@
@@ -13,7 +6,7 @@ Forwarded: https://github.com/nodejs/node/issues/33816
  //
  // Permission is hereby granted, free of charge, to any person obtaining a
  // copy of this software and associated documentation files (the
-@@ -1330,13 +1331,6 @@ function lookupAndConnect(self, options)
+@@ -1337,13 +1338,6 @@
      hints: options.hints || 0,
    };
  

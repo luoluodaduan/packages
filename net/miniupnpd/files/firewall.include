@@ -12,60 +12,59 @@ $IPTABLES -t nat -N MINIUPNPD-POSTROUTING 2>/dev/null
 
 . /lib/functions/network.sh
 
-# helper to insert in chain as penultimate
 iptables_prepend_rule() {
 	local iptables="$1"
 	local table="$2"
 	local chain="$3"
 	local target="$4"
 
-	$iptables -t "$table" -I "$chain" $($iptables -t "$table" --line-numbers -nL "$chain" | \
-		sed -ne '$s/[^0-9].*//p') -j "$target"
+	$iptables -t "$table" -nL "$chain" >/dev/null 2>&1 || return
+	$iptables -t "$table" -D "$chain" -j "$target" 2>/dev/null
+	$iptables -t "$table" -I "$chain" 1 -j "$target"
 }
 
 ADDED=0
 
 add_extzone_rules() {
-    local ext_zone="$1"
+	local ext_zone="$1"
 
-    [ -z "$ext_zone" ] && return
+	[ -z "$ext_zone" ] && return
 
-    # IPv4 - due to NAT, need to add both to nat and filter table
-    # need to insert as penultimate rule for input & forward & postrouting since final rule might be a fw3 REJECT
-    iptables_prepend_rule "$IPTABLES" filter "zone_${ext_zone}_input" MINIUPNPD
-    iptables_prepend_rule "$IPTABLES" filter "zone_${ext_zone}_forward" MINIUPNPD
-    $IPTABLES -t nat -A "zone_${ext_zone}_prerouting"  -j MINIUPNPD
-    iptables_prepend_rule "$IPTABLES" nat "zone_${ext_zone}_postrouting" MINIUPNPD-POSTROUTING
+	$IPTABLES -t filter -D "zone_${ext_zone}_input" -j MINIUPNPD 2>/dev/null
+	$IPTABLES -t filter -D "zone_${ext_zone}_forward" -j MINIUPNPD 2>/dev/null
+	$IPTABLES -t nat -D "zone_${ext_zone}_prerouting" -j MINIUPNPD 2>/dev/null
+	$IPTABLES -t nat -D "zone_${ext_zone}_postrouting" -j MINIUPNPD-POSTROUTING 2>/dev/null
 
-    # IPv6 if available - filter only
-    [ -x $IP6TABLES ] && {
-	iptables_prepend_rule "$IP6TABLES" filter "zone_${ext_zone}_input" MINIUPNPD
-	iptables_prepend_rule "$IP6TABLES" filter "zone_${ext_zone}_forward" MINIUPNPD
-    }
-    ADDED=$(($ADDED + 1))
+	[ -x $IP6TABLES ] && {
+		$IP6TABLES -t filter -D "zone_${ext_zone}_input" -j MINIUPNPD 2>/dev/null
+		$IP6TABLES -t filter -D "zone_${ext_zone}_forward" -j MINIUPNPD 2>/dev/null
+	}
+
+	iptables_prepend_rule "$IPTABLES" filter "zone_${ext_zone}_input" MINIUPNPD
+	iptables_prepend_rule "$IPTABLES" filter "zone_${ext_zone}_forward" MINIUPNPD
+	iptables_prepend_rule "$IPTABLES" nat "zone_${ext_zone}_prerouting" MINIUPNPD
+	iptables_prepend_rule "$IPTABLES" nat "zone_${ext_zone}_postrouting" MINIUPNPD-POSTROUTING
+
+	[ -x $IP6TABLES ] && {
+		iptables_prepend_rule "$IP6TABLES" filter "zone_${ext_zone}_input" MINIUPNPD
+		iptables_prepend_rule "$IP6TABLES" filter "zone_${ext_zone}_forward" MINIUPNPD
+	}
+	ADDED=$(($ADDED + 1))
 }
 
-# By default, user configuration is king.
-
 for ext_iface in $(uci -q get upnpd.config.external_iface); do
-    add_extzone_rules $(fw3 -q network "$ext_iface")
+	add_extzone_rules $(fw3 -q network "$ext_iface")
 done
 
 add_extzone_rules $(uci -q get upnpd.config.external_zone)
 
-[ "$ADDED" -ne 0 ] && exit 0
+if [ "$ADDED" -eq 0 ]; then
+	network_find_wan wan_iface
+	network_find_wan6 wan6_iface
+	for ext_iface in $wan_iface $wan6_iface; do
+		network_get_device ext_device $ext_iface
+		[ -n "$ext_device" ] && add_extzone_rules $(fw3 -q device "$ext_device")
+	done
+fi
 
-# If really nothing is available, resort to network_find_wan{,6} and
-# assume external interfaces all have same firewall zone.
-
-# (This heuristic may fail horribly, in case of e.g. multihoming, so
-# please set external_zone in that case!)
-
-network_find_wan wan_iface
-network_find_wan6 wan6_iface
-
-for ext_iface in $wan_iface $wan6_iface; do
-    # fw3 -q network fails on sub-interfaces => map to device first
-    network_get_device ext_device $ext_iface
-    add_extzone_rules $(fw3 -q device "$ext_device")
-done
+exit 0

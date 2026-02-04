@@ -1,19 +1,17 @@
-#
 # Copyright (C) 2016 Toke Høiland-Jørgensen
 #
 # This is free software, licensed under the GNU General Public License v3 or
 # later.
-#
 
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=acme
-PKG_VERSION:=3.0.6
+PKG_VERSION:=3.1.2
 PKG_RELEASE:=1
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://codeload.github.com/acmesh-official/acme.sh/tar.gz/$(PKG_VERSION)?
-PKG_HASH:=4a8e44c27e2a8f01a978e8d15add8e9908b83f9b1555670e49a9b769421f5fa6
+PKG_HASH:=a51511ad0e2912be45125cf189401e4ae776ca1a29d5768f020a1e35a9560186
 PKG_BUILD_DIR:=$(BUILD_DIR)/acme.sh-$(PKG_VERSION)
 
 PKG_MAINTAINER:=Toke Høiland-Jørgensen <toke@toke.dk>
@@ -32,12 +30,12 @@ define Package/acme
 endef
 
 define Package/acme/description
- A client for issuing Letsencrypt certificates.
+  A client for issuing Letsencrypt certificates.
 endef
 
 define Package/acme/conffiles
 /etc/config/acme
-/etc/acme
+/etc/ssl/acme
 endef
 
 define Build/Configure
@@ -47,19 +45,19 @@ define Build/Compile
 endef
 
 define Package/acme/install
-	$(INSTALL_DIR) $(1)/etc/acme
+	$(INSTALL_DIR) $(1)/etc/ssl/acme
 	$(INSTALL_DIR) $(1)/etc/config
 	$(INSTALL_CONF) ./files/acme.config $(1)/etc/config/acme
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./files/acme.init $(1)/etc/init.d/acme
 	$(INSTALL_DIR) $(1)/usr/lib/acme
-	$(INSTALL_BIN) ./files/run.sh $(1)/usr/lib/acme/run-acme
+	$(INSTALL_BIN) ./files/run.sh $(1)/usr/lib/acme/run.sh
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/acme.sh $(1)/usr/lib/acme/acme.sh
 endef
 
 define Package/acme/prerm
 #!/bin/sh
-sed -i '/\/etc\/init\.d\/acme start/d' /etc/crontabs/root
+sed -i '/\/etc\/init\.d\/acme/d' /etc/crontabs/root
 endef
 
 define Package/acme-dnsapi
@@ -71,7 +69,7 @@ define Package/acme-dnsapi
 endef
 
 define Package/acme-dnsapi/description
- This package provides DNS API integration for ACME (Letsencrypt) client.
+  This package provides DNS API integration for ACME (Letsencrypt) client.
 endef
 
 define Package/acme-dnsapi/install

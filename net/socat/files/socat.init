@@ -1,55 +1,168 @@
 #!/bin/sh /etc/rc.common
-# Copyright (C) 2008-2014 OpenWrt.org
+# Copyright (C) 2020-2026 Lienol <lawlienol@gmail.com>
 
 START=99
-STOP=99
-
 USE_PROCD=1
-PROG=/usr/bin/socat
-NAME=socat
 
-validate_section_socat()
-{
-	uci_load_validate socat socat "$1" "$2" \
-		'enable:bool:1' \
-		'SocatOptions:or(string, list(string))'
+PROG_BIN="/usr/bin/socat"
+FW_INCLUDE_FILE="/var/etc/socat.include"
+
+add_firewall() {
+	iptables -N SOCAT 2>/dev/null
+	iptables -C INPUT -j SOCAT 2>/dev/null || iptables -I INPUT -j SOCAT
+	ip6tables -N SOCAT 2>/dev/null
+	ip6tables -C INPUT -j SOCAT 2>/dev/null || ip6tables -I INPUT -j SOCAT
 }
 
-append_param_command()
-{
-	procd_append_param command "$1"
+clear_firewall() {
+	local ipt
+	for ipt in iptables ip6tables; do
+		$ipt -D INPUT -j SOCAT 2>/dev/null
+		$ipt -F SOCAT 2>/dev/null
+		$ipt -X SOCAT 2>/dev/null
+	done
 }
 
-socat_instance()
-{
-	local is_list
+gen_include() {
+	echo '#!/bin/sh' >"$FW_INCLUDE_FILE"
 
-	[ "$2" = 0 ] || {
-		echo "validation failed"
-		return 1
+	extract_rules() {
+		local _ipt="$1"
+		if $_ipt-save -t filter | grep -q "^-A SOCAT"; then
+			echo "*filter"
+			echo ":SOCAT - [0:0]"
+			$_ipt-save -t filter | grep "^-A SOCAT"
+			echo 'COMMIT'
+		fi
 	}
 
-	[ "$enable" = "0" ] && return 1
+	local v4_rules=$(extract_rules iptables)
+	local v6_rules=$(extract_rules ip6tables)
 
-	procd_open_instance
-	procd_set_param command "$PROG"
-	config_get is_list "$1" SocatOptions_LENGTH
-	if [ -z "$is_list" ]; then
-		procd_append_param command $SocatOptions
-	else
-		config_list_foreach "$1" SocatOptions append_param_command
-	fi
-	procd_set_param stdout 1
-	procd_set_param stderr 1
-	procd_close_instance
+	cat <<-EOF >>"$FW_INCLUDE_FILE"
+		iptables -N SOCAT 2>/dev/null
+		ip6tables -N SOCAT 2>/dev/null
+		iptables -F SOCAT 2>/dev/null
+		ip6tables -F SOCAT 2>/dev/null
+		iptables -C INPUT -j SOCAT 2>/dev/null || iptables -I INPUT 1 -j SOCAT
+		ip6tables -C INPUT -j SOCAT 2>/dev/null || ip6tables -I INPUT 1 -j SOCAT
+
+		$([ -n "$v4_rules" ] && echo "iptables-restore -n <<EOT
+$v4_rules
+EOT")
+		$([ -n "$v6_rules" ] && echo "ip6tables-restore -n <<EOT
+$v6_rules
+EOT")
+	EOF
+
+	chmod +x "$FW_INCLUDE_FILE"
 }
 
-start_service () {
-	config_load "$NAME"
-	config_foreach validate_section_socat socat socat_instance
+run_service() {
+	local cfg="$1"
+	local enable remarks protocol family proto listen_port reuseaddr dest_proto dest_ip dest_port firewall_accept
+	local cert_path key_path check_verify ca_path
+
+	config_get_bool enable "$cfg" enable 0
+	[ "$enable" -eq 0 ] && return 0
+
+	config_get remarks "$cfg" remarks
+	config_get protocol "$cfg" protocol "port_forwards"
+	config_get family "$cfg" family
+	config_get proto "$cfg" proto "tcp"
+	config_get listen_port "$cfg" listen_port
+	config_get_bool reuseaddr "$cfg" reuseaddr 1
+	config_get dest_proto "$cfg" dest_proto
+	config_get dest_ip "$cfg" dest_ip
+	config_get dest_port "$cfg" dest_port
+	config_get_bool firewall_accept "$cfg" firewall_accept 1
+	config_get cert_path "$cfg" cert_path
+	config_get key_path "$cfg" key_path
+	config_get_bool check_verify "$cfg" check_verify 0
+	config_get ca_path "$cfg" ca_path
+
+	[ -z "$listen_port" ] || [ -z "$dest_ip" ] || [ -z "$dest_port" ] || [ -z "$dest_proto" ] && return 0
+
+	listen_port=$(echo "$listen_port" | tr -cd '0-9-')
+	dest_port=$(echo "$dest_port" | tr -cd '0-9-')
+
+	dest_ip=$(echo "$dest_ip" | tr -cd '0-9a-fA-F.:-')
+	if echo "$dest_proto" | grep -q "6"; then
+		dest_ip="[$dest_ip]"
+	fi
+
+	local actual_proto=$(echo "$proto" | tr 'a-z' 'A-Z')
+	[ "$actual_proto" = "SSL" ] && actual_proto="OPENSSL"
+
+	local listen_type="${actual_proto}-LISTEN"
+
+	local listen_opts="fork"
+	[ "$reuseaddr" -eq 1 ] && listen_opts="reuseaddr,${listen_opts}"
+
+	if [ "$family" = "4" ]; then
+		listen_opts="pf=ip4,${listen_opts}"
+	elif [ "$family" = "6" ]; then
+		listen_opts="pf=ip6,ipv6only=1,${listen_opts}"
+	else
+		listen_opts="pf=ip6,ipv6only=0,${listen_opts}"
+	fi
+
+	if [ "$actual_proto" = "OPENSSL" ]; then
+		if [ -f "$cert_path" ] && [ -f "$key_path" ]; then
+			listen_opts="${listen_opts},cert=${cert_path},key=${key_path}"
+
+			if [ "$check_verify" -eq 1 ] && [ -f "$ca_path" ]; then
+				listen_opts="${listen_opts},cafile=${ca_path},verify=1"
+			else
+				listen_opts="${listen_opts},verify=0"
+			fi
+			listen_opts="${listen_opts},min-proto-version=TLS1.2"
+		else
+			return 1
+		fi
+	fi
+
+	if [ "$protocol" = "port_forwards" ]; then
+		procd_open_instance "$cfg"
+		procd_set_param command "$PROG_BIN" "-t10" "${listen_type}:${listen_port},${listen_opts}" "${dest_proto}:${dest_ip}:${dest_port}"
+		procd_set_param stdout 1
+		procd_set_param stderr 1
+		procd_set_param file /etc/config/socat
+		procd_set_param respawn
+		procd_close_instance
+	fi
+
+	if [ "$firewall_accept" -eq 1 ]; then
+		local fw_proto=$(echo "$proto" | tr 'A-Z' 'a-z')
+		[ "$fw_proto" = "ssl" ] && fw_proto="tcp"
+		[ -z "$family" ] || [ "$family" = "6" ] &&
+			ip6tables -A SOCAT -p "$fw_proto" --dport "$listen_port" -m comment --comment "$remarks" -j ACCEPT 2>/dev/null
+		[ -z "$family" ] || [ "$family" = "4" ] &&
+			iptables -A SOCAT -p "$fw_proto" --dport "$listen_port" -m comment --comment "$remarks" -j ACCEPT 2>/dev/null
+	fi
+}
+
+start_service() {
+	clear_firewall
+	config_load socat
+	local global_enable
+	config_get_bool global_enable global enable 0
+	[ "$global_enable" -eq 1 ] || {
+		stop_service
+		return 0
+	}
+
+	add_firewall
+	config_foreach run_service "config"
+	gen_include
 }
 
 service_triggers() {
-	procd_add_reload_trigger "$NAME"
-	procd_add_validation validate_section_socat
+	procd_add_raw_trigger "acme.renew" 10000 /etc/init.d/socat restart
+	procd_add_reload_trigger "socat"
+}
+
+stop_service() {
+	clear_firewall
+	rm -f "$FW_INCLUDE_FILE"
 }

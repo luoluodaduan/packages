@@ -4,32 +4,33 @@
 START=99
 USE_PROCD=1
 
-CONF="ddns-go"
-YAML="/etc/$CONF/config.yaml"
-PROG="/usr/bin/$CONF"
+YAML="/etc/ddns-go/config.yaml"
+PROG="/usr/bin/ddns-go"
 
 start_service() {
-	config_load "$CONF"
+	config_load "ddns-go"
 
 	local enabled
 	config_get_bool enabled "config" "enabled" "0"
 	[ "$enabled" -eq "1" ] || return 1
 
-	local listen ttl noweb insecure
+	local listen ttl dns noweb insecure
 	config_get listen "config" "listen" "[::]:9876"
-	config_get ttl "config" "ttl" "300"
+	config_get ttl "config" "ttl" "600"
+	config_get dns "config" "dns" "127.0.0.1"
 	config_get_bool noweb "config" "noweb" "0"
 	config_get_bool insecure "config" "insecure" "0"
 
-	[ -d "${YAML%/*}" ] || mkdir -p "${YAML%/*}"
+	[ -d "/etc/ddns-go" ] || mkdir -p "/etc/ddns-go"
 	touch "$YAML"
-	chown ddns-go "$YAML"
+	chown -R ddns-go:ddns-go "/etc/ddns-go"
 
-	procd_open_instance "$CONF"
+	procd_open_instance "ddns-go"
 	procd_set_param command "$PROG"
 	procd_append_param command -c "$YAML"
 	procd_append_param command -l "$listen"
 	procd_append_param command -f "$ttl"
+	[ -z "$dns" ] || procd_append_param command -dns "$dns"
 	[ "$noweb" -eq "0" ] || procd_append_param command -noweb
 	[ "$insecure" -eq "0" ] || procd_append_param command -skipVerify
 
@@ -41,5 +42,6 @@ start_service() {
 }
 
 service_triggers() {
-	procd_add_reload_trigger "$CONF"
+	procd_add_reload_trigger "ddns-go"
+	procd_add_interface_trigger "wan" "ifup" /etc/init.d/ddns-go restart
 }
