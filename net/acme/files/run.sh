@@ -18,14 +18,28 @@ STATE_DIR=/etc/ssl/acme
 ACCOUNT_EMAIL=
 DEBUG=0
 USER_CLEANUP=
-AUTO_UPDATE_DAY_TIME=6
-AUTO_UPDATE_WEEK_TIME=2
 
 . /lib/functions.sh
 
+_get_global_cfg() {
+	config_get auto_update_day_time "$1" "auto_update_day_time" "*"
+	config_get auto_update_week_time "$1" "auto_update_week_time" "*"
+}
+
 check_cron() {
-	[ -f "/etc/crontabs/root" ] && grep -q '/etc/init.d/acme' /etc/crontabs/root && return
-	echo "0 $AUTO_UPDATE_DAY_TIME * * $AUTO_UPDATE_WEEK_TIME /etc/init.d/acme start" >>/etc/crontabs/root
+	config_foreach _get_global_cfg acme
+
+	local cron_cmd="/etc/init.d/acme start"
+	local cron_file="/etc/crontabs/root"
+	local new_cron="0 $auto_update_day_time * * $auto_update_week_time $cron_cmd"
+
+	[ -f "$cron_file" ] && grep -Fq "$new_cron" "$cron_file" && return
+
+	if [ -f "$cron_file" ]; then
+		sed -i "\|$cron_cmd|d" "$cron_file"
+	fi
+
+	echo "$new_cron" >>"$cron_file"
 	/etc/init.d/cron reload
 }
 
@@ -260,12 +274,12 @@ load_vars() {
 	DEBUG=$(config_get "$1" debug 0)
 }
 
+config_load acme
+config_foreach load_vars acme
+
 check_cron
 [ -n "$CHECK_CRON" ] && exit 0
 [ -e "/var/run/acme_boot" ] && rm -f "/var/run/acme_boot" && exit 0
-
-config_load acme
-config_foreach load_vars acme
 
 if [ -z "$ACCOUNT_EMAIL" ]; then
 	err "account_email must be set in /etc/config/acme"

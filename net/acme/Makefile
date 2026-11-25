@@ -6,12 +6,12 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=acme
-PKG_VERSION:=3.1.2
+PKG_VERSION:=3.1.7
 PKG_RELEASE:=1
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://codeload.github.com/acmesh-official/acme.sh/tar.gz/$(PKG_VERSION)?
-PKG_HASH:=a51511ad0e2912be45125cf189401e4ae776ca1a29d5768f020a1e35a9560186
+PKG_HASH:=1b674f31aab8844e0ed770d4a5907a777d259f58b476c5f9334cc846832081e7
 PKG_BUILD_DIR:=$(BUILD_DIR)/acme.sh-$(PKG_VERSION)
 
 PKG_MAINTAINER:=Toke Høiland-Jørgensen <toke@toke.dk>

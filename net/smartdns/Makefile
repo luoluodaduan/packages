@@ -1,11 +1,11 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2018-2026 Nick Peng (pymumu@gmail.com)
+# This is free software, licensed under the GNU General Public License v3.
 #
-# Copyright (c) 2018-2023 Nick Peng (pymumu@gmail.com)
 
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=smartdns
-PKG_VERSION:=47.1
+PKG_VERSION:=48.5
 PKG_RELEASE:=1
 
 PKG_SOURCE_PROTO:=git
@@ -34,7 +34,7 @@ endef
 define Package/smartdns
 $(Package/smartdns/default)
   TITLE:=smartdns server
-  DEPENDS:=+i386:libatomic +libpthread +libopenssl
+  DEPENDS:=+libpthread +libopenssl +libatomic +zlib
 endef
 
 define Package/smartdns/description
